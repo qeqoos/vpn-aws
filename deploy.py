@@ -6,23 +6,24 @@ import sys
 # root = tk.Tk()
 # root.mainloop()
 
-AWS_REGION = "eu-central-1"
-VPC_ID = "vpc-05a63425b4ac937e4" # eu-central
-# VPC_ID = "vpc-81cf74f8"  # eu-west-1
+AWS_REGION = 'eu-central-1'
+VPC_ID = 'vpc-05a63425b4ac937e4' # eu-central
+# VPC_ID = 'vpc-81cf74f8'  # eu-west-1
+WG_PORT = '51820' # create check for 49152-65530
 
 Config = botocore.config.Config(region_name=AWS_REGION)
 
-# client = boto3.client(
-#     "ec2",
-#     aws_access_key_id="pass",
-#     aws_secret_access_key="pass",
-#     config=Config
-# )
-
 client = boto3.client(
-    "ec2",
+    'ec2',
+    aws_access_key_id='',
+    aws_secret_access_key='',
     config=Config
 )
+
+# client = boto3.client(
+#     "ec2",
+#     config=Config
+# )
 
 ec2 = boto3.resource('ec2', region_name=AWS_REGION)
 
@@ -55,6 +56,7 @@ def get_public_subnets():
                 public_subnets.append(subnetId)
     return public_subnets if public_subnets else print(f"No public subnets in {VPC_ID}")       
 
+
 def configure_security_groups():
     apicall = client.describe_security_groups(
         Filters=[
@@ -62,11 +64,56 @@ def configure_security_groups():
                 'Name': 'vpc-id',
                 'Values': [
                         VPC_ID,
-                ]
+                ],
+                'Name': 'group-name',
+                'Values': [
+                        'Managed Wireguard SG',
+                ],
+                'Name': 'tag:CreatedByScript',
+                'Values': ['True']
             },
         ]
     )
-    print(apicall)
+
+    if apicall['SecurityGroups']:
+        print(f'Wireguard SG on port {WG_PORT} is already present in VPC. Skipping...')
+    else: 
+        print(f'No Wireguard SG found on port {WG_PORT}, creating one...')
+        create_sg_apicall = client.create_security_group(
+            VpcId=VPC_ID,
+            GroupName='Managed Wireguard SG',
+            Description='Allows wireguard and SSH connection',
+            TagSpecifications=[
+                {
+                    'ResourceType': 'security-group',
+                    'Tags': [
+                        {
+                            'Key': 'CreatedByScript',
+                            'Value': 'True'
+                        },
+                    ]
+                },
+            ],
+        )
+        created_sg_id = create_sg_apicall['GroupId']
+
+        rules = client.authorize_security_group_ingress(
+            GroupId=created_sg_id,
+            IpPermissions=[
+                {
+                    'IpProtocol': 'udp',
+                    'FromPort': int(WG_PORT),
+                    'ToPort': int(WG_PORT),
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                },
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 22,
+                    'ToPort': 22,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                }
+            ],
+        )
 
 def create_ec2_instance():
     pass
