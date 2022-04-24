@@ -1,7 +1,9 @@
 # import tkinter as tk
+import re
 import boto3
 import botocore
 import sys
+import time
 
 # root = tk.Tk()
 # root.mainloop()
@@ -11,6 +13,7 @@ AWS_REGION = 'eu-west-1'
 VPC_ID = 'vpc-81cf74f8'  # eu-west-1
 PROTOCOL_NAME = 'Wireguard'
 WG_PORT = '51820' # create check for 49152-65530
+CREATION_TIMEOUT_MINS = 4 
 
 Config = botocore.config.Config(region_name=AWS_REGION)
 
@@ -34,17 +37,15 @@ def get_public_subnets():
         Filters=[
             {   
                 'Name': 'vpc-id',
-                'Values': [
-                    VPC_ID,
-                ],
+                'Values': [VPC_ID],
+            },
+            {
                 'Name': 'route.state',
-                'Values': [
-                    'active',
-                ],
+                'Values': ['active'],
+            },
+            {
                 'Name': 'route.destination-cidr-block',
-                'Values': [
-                    '0.0.0.0/0',
-                ]
+                'Values': ['0.0.0.0/0']
             },
         ]
     )
@@ -63,13 +64,13 @@ def configure_security_groups():
         Filters=[
             {
                 'Name': 'vpc-id',
-                'Values': [
-                        VPC_ID,
-                ],
+                'Values': [VPC_ID],
+            },
+            {
                 'Name': 'group-name',
-                'Values': [
-                        f'Managed {PROTOCOL_NAME} SG',
-                ],
+                'Values': [f'Managed {PROTOCOL_NAME} SG'],
+            },
+            {
                 'Name': 'tag:CreatedByScript',
                 'Values': ['True']
             },
@@ -145,29 +146,45 @@ def get_ami():
         return ami
     except IndexError:
         print('No suitable AMI found. Check filters.')
-        
 
-def create_ec2_instance_main():
-    SUBNET_CHOICE = 0
-    subnet_list = get_public_subnets()
 
+def get_instance_id(SUBNET_CHOICE, subnet_list):
     check_instances_apicall = client.describe_instances(
         Filters=[
             {
                 'Name': 'subnet-id',
-                'Values': [subnet_list[SUBNET_CHOICE]],
-                'Name': 'tag:Name',
-                'Values': [f'{PROTOCOL_NAME} VPN server'],
-                'Name': 'tag:CreatedByScript',
-                'Values': ['True'],
-                'Name': 'tag:Protocol',
-                'Values': [f'{PROTOCOL_NAME}'],
+                'Values': [subnet_list[SUBNET_CHOICE]]
             },
+            {
+                'Name': 'instance-state-name',
+                'Values': ['pending','running','stopping','stopped'],
+            },
+            {
+                'Name': 'tag:Name',
+                'Values': [f'{PROTOCOL_NAME} VPN server']
+            },
+            {
+                'Name': 'tag:CreatedByScript',
+                'Values': ['True']
+            },
+            {
+                'Name': 'tag:Protocol',
+                'Values': [f'{PROTOCOL_NAME}']
+            }
         ],
     )
-    if check_instances_apicall['Reservations']:
-        print(
-            f'{PROTOCOL_NAME} VPN server already exists in subnet {subnet_list[SUBNET_CHOICE]}.')
+    instance_id = check_instances_apicall['Reservations']
+    return instance_id
+
+
+def create_ec2_instance_main():
+    SUBNET_CHOICE = 0
+    subnet_list = get_public_subnets()
+    instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)
+
+    if instance_id:
+        print(f'{PROTOCOL_NAME} VPN server already exists in subnet {subnet_list[SUBNET_CHOICE]}.')
+        print(f'InstanceId is {instance_id}')
     else:
         print(f'No {PROTOCOL_NAME} VPN server found in subnet {subnet_list[SUBNET_CHOICE]}, creating one...') 
         image_id = get_ami()
@@ -233,5 +250,41 @@ def create_ec2_instance_main():
             )
         except Exception as e:
             print(f'Error in server configuration - {e}')
+        
+        instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)[0]['Instances'][0]['InstanceId']
+        timeout_check = 0 # 4 minutes creation timeout
+        while True:
+            get_status_apicall = client.describe_instance_status(
+                InstanceIds=[
+                    instance_id,
+                ],
+                Filters=[
+                    {
+                        'Name': 'instance-state-name',
+                        'Values': ['running']
+                    },
+                    {
+                        'Name': 'instance-status.status',
+                        'Values': ['ok']
+                    },
+                    {
+                        'Name': 'system-status.status',
+                        'Values': ['ok']
+                    },
+                ],
+                # DryRun=True,
+            )
+            if get_status_apicall['InstanceStatuses']:
+                print('Instance is ready.')
+                break
+            elif timeout_check == CREATION_TIMEOUT_MINS * 6:
+                print(f'Instance creation exceeded {CREATION_TIMEOUT_MINS} minutes. Stopping...')
+                break
+            else: 
+                print('Instance still being created...')
+                time.sleep(10)
+                timeout_check += 1
 
-create_ec2_instance_main()
+
+# create_ec2_instance_main()
+# 
