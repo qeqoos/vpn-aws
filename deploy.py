@@ -191,10 +191,11 @@ def get_instance_id(SUBNET_CHOICE, subnet_list):
     return instance_id
 
 
-def get_profile_name_arn():
+def create_role():
     iam_client = boto3.client('iam')
     try:
         role_check_apicall = iam_client.get_role(RoleName='EC2SSMrole')
+        print('Role already exists.')
     except Exception as e:
         print(e)
         print('Creating role...')
@@ -219,13 +220,16 @@ def get_profile_name_arn():
             RoleName='EC2SSMrole',
             PolicyArn='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
         )
-        
+
+
+def get_profile_name_arn():
+    iam_client = boto3.client('iam')
     try:
         profile_check_apicall = iam_client.get_instance_profile(InstanceProfileName='EC2SSMprofile')
+        print('Instance profile already exists.')
     except Exception as e:
         print(e)
-        print('Creating profile and assuming role...')
-        role_check_apicall = iam_client.get_role(RoleName='EC2SSMrole')
+        print('Creating profile and attaching role to it...')
         create_profile_apicall = iam_client.create_instance_profile(InstanceProfileName='EC2SSMprofile')
         add_role_profile_apicall = iam_client.add_role_to_instance_profile(InstanceProfileName='EC2SSMprofile', RoleName='EC2SSMrole')
         profile_check_apicall = iam_client.get_instance_profile(InstanceProfileName='EC2SSMprofile')
@@ -245,6 +249,7 @@ def create_ec2_instance_main():
         
         image_id = get_ami()
         security_group_id = configure_security_groups()
+        create_role()
         ec2_profile = get_profile_name_arn()
 
         key_name = 'vpn_ssh_' + str(datetime.now().strftime('%Y%m%d%H%M%S'))
@@ -257,6 +262,9 @@ def create_ec2_instance_main():
             wg_install = install_script.read()
             wg_install = wg_install.replace('*port*', WG_PORT)
 
+        print(ec2_profile['InstanceProfile']['Arn'])
+
+        time.sleep(10) # Window for API calls to settle
         print('Prerequisites finshed. Started creation of server...')
         try:     
             server = ec2.create_instances(
@@ -322,11 +330,11 @@ def create_ec2_instance_main():
         except Exception as e:
             print(f'Error in server configuration - {e}')
         
-        instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)[0]['Instances'][0]
+        instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)
         timeout_check = 0 # 4 minutes creation timeout
         while True:
             get_status_apicall = client.describe_instance_status(
-                InstanceIds=[instance_id['InstanceId']],
+                InstanceIds=[instance_id[0]['Instances'][0]['InstanceId']],
                 Filters=[
                     {
                         'Name': 'instance-state-name',
@@ -344,7 +352,8 @@ def create_ec2_instance_main():
             )
             if get_status_apicall['InstanceStatuses']:
                 print('Instance is ready.')
-                print(f'Public IP {instance_id["PublicIpAddress"]}.')
+                instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)
+                print(f'InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}')
                 break
             elif timeout_check == CREATION_TIMEOUT_MINS * 6:
                 print(f'Instance creation exceeded {CREATION_TIMEOUT_MINS} minutes. Stopping...')
@@ -355,7 +364,7 @@ def create_ec2_instance_main():
                 timeout_check += 1
 
 
-# create_ec2_instance_main()
+create_ec2_instance_main()
 
 
 def create_peer():
@@ -388,5 +397,6 @@ def create_peer():
         return output['StandardOutputContent']
     else:
         print('No WG instances found. Please, create one.')
+
 
 print(create_peer())
