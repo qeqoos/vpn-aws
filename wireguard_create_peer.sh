@@ -18,9 +18,13 @@ DNS = 8.8.8.8
 
 [Peer]
 PublicKey = $(cat /etc/wireguard/publickey)
-Endpoint = $(curl http://169.254.169.254/latest/meta-data/public-ipv4):*port*
+Endpoint = $(curl http://169.254.169.254/latest/meta-data/public-ipv4):*wg_port*
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 20
 EOT
 
+echo '================================================'
+
 cat /etc/wireguard/*peer_name*/*peer_name*_client_file
+
+echo '================================================'
