@@ -8,14 +8,25 @@ import json
 # root = tk.Tk()
 # root.mainloop()
 
-AWS_REGION = 'eu-west-1'
-# VPC_ID = 'vpc-05a63425b4ac937e4' # eu-central
-VPC_ID = 'vpc-81cf74f8'  # eu-west-1
-PROTOCOL_NAME = 'Wireguard'
-WG_PORT = '51820' # create check for 49152-65530
-SUBNET_CHOICE = 0
-CREATION_TIMEOUT_MINS = 4 
-PEER_NAME = 'pablo'
+# also make entries for access and secret keys
+
+AWS_REGION = 'eu-west-1'  # user enters
+# VPC_ID = 'vpc-05a63425b4ac937e4'  # eu-central, user enters
+# VPC_ID = 'vpc-81cf74f8'  # eu-west-1
+VPC_ID = 'vpc-0e128b2f79b9e772d' 
+SUBNET_CHOICE = 2   # user chooses form drop-down list
+SSH_PORT = '12345' # user enters
+CREATION_TIMEOUT_MINS = 5  # user enters
+
+# WG
+# PROTOCOL_NAME = 'Wireguard' # user chooses using radio button
+WG_PORT = '51820' # user enters, create check for 49152-65530
+PEER_NAME = 'pablo' # user enters
+
+# IPsec
+PROTOCOL_NAME = 'IPsec'  # user chooses using radio button
+USERNAME = 'pablo'  # user enters
+PASSWORD = '12345'  # user enters
 
 Config = botocore.config.Config(region_name=AWS_REGION)
 
@@ -32,17 +43,6 @@ client = boto3.client(
 )
 
 ec2 = boto3.resource('ec2', region_name=AWS_REGION)
-
-# vpc_cidr_block = client.describe_vpcs(VpcIds=[VPC_ID])['Vpcs'][0]['CidrBlock']
-# used_octets = vpc_cidr_block.split('.')[0] + '.' + vpc_cidr_block.split('.')[1]
-# peer_private_ips = used_octets + '.69.0/24'
-
-# with open('wg_create_peer.sh', 'r') as peer_script:
-#     wg_create_peer = peer_script.read()
-#     wg_create_peer = wg_create_peer.replace('*peer_name*', PEER_NAME)
-#     wg_create_peer = wg_create_peer.replace('*port*', WG_PORT)
-#     wg_create_peer = wg_create_peer.replace(
-#         '*peer_private_ips*', peer_private_ips)
 
 
 def get_public_subnets():
@@ -93,9 +93,9 @@ def configure_security_groups():
 
     if list_sgs_apicall['SecurityGroups']:
         created_sg_id = list_sgs_apicall['SecurityGroups'][0]['GroupId']
-        print(f'{PROTOCOL_NAME} SG on port {WG_PORT} already exists in VPC. SG ID is {created_sg_id}')
+        print(f'{PROTOCOL_NAME} SG already exists in VPC.')
     else: 
-        print(f'No {PROTOCOL_NAME} SG found on port {WG_PORT}, creating one...')
+        print(f'No {PROTOCOL_NAME} SG found, creating one...')
         try:
             create_sg_apicall = client.create_security_group(
                 VpcId=VPC_ID,
@@ -118,23 +118,54 @@ def configure_security_groups():
                 ],
             )
             created_sg_id = create_sg_apicall['GroupId']
-            rules_apicall = client.authorize_security_group_ingress(
-                GroupId=created_sg_id,
-                IpPermissions=[
-                    {
-                        'IpProtocol': 'udp',
-                        'FromPort': int(WG_PORT),
-                        'ToPort': int(WG_PORT),
-                        'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
-                    },
-                    {
-                        'IpProtocol': 'tcp',
-                        'FromPort': 22,
-                        'ToPort': 22,
-                        'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
-                    }
-                ],
-            )
+            if PROTOCOL_NAME == 'Wireguard':
+                rules_apicall = client.authorize_security_group_ingress(
+                    GroupId=created_sg_id,
+                    IpPermissions=[
+                        {
+                            'IpProtocol': 'udp',
+                            'FromPort': int(WG_PORT),
+                            'ToPort': int(WG_PORT),
+                            'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                        },
+                        {
+                            'IpProtocol': 'tcp',
+                            'FromPort': int(SSH_PORT),
+                            'ToPort': int(SSH_PORT),
+                            'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                        }
+                    ],
+                )
+            else:
+                rules_apicall = client.authorize_security_group_ingress(
+                    GroupId=created_sg_id,
+                    IpPermissions=[
+                        {
+                            'IpProtocol': 'udp',
+                            'FromPort': 500,
+                            'ToPort': 500,
+                            'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                        },
+                        {
+                            'IpProtocol': 'udp',
+                            'FromPort': 4500,
+                            'ToPort': 4500,
+                            'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                        },
+                        {
+                            'IpProtocol': 'udp',
+                            'FromPort': 1701,
+                            'ToPort': 1701,
+                            'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                        },
+                        {
+                            'IpProtocol': 'tcp',
+                            'FromPort': int(SSH_PORT),
+                            'ToPort': int(SSH_PORT),
+                            'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+                        }
+                    ],
+                )
         except Exception as e:
             print(f'Error in security group configuration - {e}')
 
@@ -256,13 +287,16 @@ def create_ec2_instance_main():
         keypair_apicall = client.create_key_pair(KeyName=key_name, KeyType='rsa')
         with open(key_name, 'w') as file:
             file.write(keypair_apicall['KeyMaterial'])
-        print('Change flie permissions to 600.')
 
-        with open('wg_install.sh', 'r') as install_script:
-            wg_install = install_script.read()
-            wg_install = wg_install.replace('*port*', WG_PORT)
-
-        print(ec2_profile['InstanceProfile']['Arn'])
+        if PROTOCOL_NAME == 'Wireguard':
+            with open('wireguard_install.sh', 'r') as install_script:
+                init_install = install_script.read()
+                init_install = init_install.replace('*ssh_port*', SSH_PORT)
+                init_install = init_install.replace('*wg_port*', WG_PORT)
+        else:
+            with open('ipsec_install.sh', 'r') as install_script:
+                init_install = install_script.read()
+                init_install = init_install.replace('*ssh_port*', SSH_PORT)
 
         time.sleep(10) # Window for API calls to settle
         print('Prerequisites finshed. Started creation of server...')
@@ -305,7 +339,7 @@ def create_ec2_instance_main():
                         'InterfaceType': 'interface',
                     },
                 ],
-                UserData=wg_install,
+                UserData=init_install,
                 InstanceInitiatedShutdownBehavior='stop', 
                 TagSpecifications=[
                     {
@@ -376,15 +410,21 @@ def create_peer():
         vpc_cidr_block = client.describe_vpcs(VpcIds=[VPC_ID])['Vpcs'][0]['CidrBlock']
         used_octets = vpc_cidr_block.split('.')[0] + '.' + vpc_cidr_block.split('.')[1]
         peer_private_ips = used_octets + '.69.0/24'
-        with open('wg_create_peer.sh', 'r') as peer_script:
-            wg_create_peer = peer_script.read()
-            wg_create_peer = wg_create_peer.replace('*peer_name*', PEER_NAME)
-            wg_create_peer = wg_create_peer.replace('*port*', WG_PORT)
-            wg_create_peer = wg_create_peer.replace('*peer_private_ips*', peer_private_ips)
+        if PROTOCOL_NAME == 'Wireguard':
+            with open('wireguard_create_peer.sh', 'r') as peer_script:
+                create_peer = peer_script.read()
+                create_peer = create_peer.replace('*peer_name*', PEER_NAME)
+                create_peer = create_peer.replace('*wg_port*', WG_PORT)
+                create_peer = create_peer.replace('*peer_private_ips*', peer_private_ips)
+        else:
+            with open('ipsec_create_peer.sh', 'r') as peer_script:
+                create_peer = peer_script.read()
+                create_peer = create_peer.replace('*username*', USERNAME)
+                create_peer = create_peer.replace('*password*', PASSWORD)
 
         exec_script = ssm_client.send_command(
-            DocumentName="AWS-RunShellScript",  # One of AWS' preconfigured documents
-            Parameters={'commands': [wg_create_peer]},
+            DocumentName="AWS-RunShellScript",
+            Parameters={'commands': [create_peer]},
             InstanceIds=[instance_id]
         )
 
@@ -396,7 +436,11 @@ def create_peer():
         )
         return output['StandardOutputContent']
     else:
-        print('No WG instances found. Please, create one.')
+        print(f'No {PROTOCOL_NAME} VPN server found. Please, create one.')
 
 
 print(create_peer())
+
+
+# aws iam delete-role --role-name EC2SSMrole
+# aws iam delete-instance-profile --instance-profile-name EC2SSMprofile
