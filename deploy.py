@@ -1,14 +1,12 @@
-# import tkinter as tk
+from tkinter import *
+from tkinter import ttk
+from tkinter.messagebox import *
+
 import boto3
 import botocore
 import time
 from datetime import datetime
 import json
-
-# root = tk.Tk()
-# root.mainloop()
-
-# also make entries for access and secret keys
 
 AWS_REGION = 'eu-west-1'  # user enters
 # VPC_ID = 'vpc-05a63425b4ac937e4'  # eu-central, user enters
@@ -30,13 +28,6 @@ PASSWORD = '12345'  # user enters
 
 Config = botocore.config.Config(region_name=AWS_REGION)
 
-# client = boto3.client(
-#     'ec2',
-#     aws_access_key_id='',
-#     aws_secret_access_key='',
-#     config=Config
-# )
-
 client = boto3.client(
     "ec2",
     config=Config
@@ -46,7 +37,9 @@ ec2 = boto3.resource('ec2', region_name=AWS_REGION)
 
 
 def get_public_subnets():
+    check_creds()
     public_subnets = []
+    VPC_ID = vpc_id.get()
     list_route_tables_apicall = client.describe_route_tables(
         Filters=[
             {   
@@ -70,7 +63,11 @@ def get_public_subnets():
             subnetId = assoc.get('SubnetId')
             if subnetId:
                 public_subnets.append(subnetId)
-    return public_subnets if public_subnets else print(f'No public subnets in {VPC_ID}. Please, create one.')       
+    if public_subnets:
+        subnet_box['values'] = public_subnets
+        subnet_box.current(0)
+    else: 
+        showwarning('Warning', f'No public subnets in {VPC_ID}. Please, create one.')       
 
 
 def configure_security_groups():
@@ -398,7 +395,7 @@ def create_ec2_instance_main():
                 timeout_check += 1
 
 
-create_ec2_instance_main()
+# create_ec2_instance_main()
 
 
 def create_peer():
@@ -439,8 +436,66 @@ def create_peer():
         print(f'No {PROTOCOL_NAME} VPN server found. Please, create one.')
 
 
-print(create_peer())
+# print(create_peer())
 
 
 # aws iam delete-role --role-name EC2SSMrole
 # aws iam delete-instance-profile --instance-profile-name EC2SSMprofile
+
+
+root = Tk()
+root.title('vpn-aws')
+root.geometry('700x500')
+
+aws_access_key = Entry(root, width=30)  
+aws_secret_key = Entry(root, width=30)  
+aws_region = Entry(root, width=10)
+
+Label(root, text='AWS access key:').place(x=10, y=10)
+aws_access_key.place(x=150, y=10)
+
+Label(root, text='AWS secret key:').place(x=10, y=40)
+aws_secret_key.place(x=150, y=40)
+
+Label(root, text='AWS region:').place(x=10, y=70)
+aws_region.place(x=150, y=70)
+
+def check_creds():
+    try:
+        Config = botocore.config.Config(region_name=aws_region.get())
+        sts = boto3.client(
+            'sts',
+            aws_access_key_id=aws_access_key.get(),
+            aws_secret_access_key=aws_secret_key.get(),
+            config=Config
+        )
+        sts.get_caller_identity()
+    except Exception:
+        showerror('Error', 'Credentials are not valid. Check your AWS policies, credentials or region.')
+
+
+vpc_id = Entry(root, width=20)
+
+Label(root, text='VPC ID:').place(x=10, y=100)
+vpc_id.place(x=150, y=100)
+
+Label(root, text='Subnet ID:').place(x=400, y=100)
+subnet_box = ttk.Combobox(root, values=['-'])
+subnet_box.place(x=480, y=100)
+subnet_box.current(0)
+
+Button(root, text='Get public subnets', command=get_public_subnets).place(x=500, y=30)
+
+Label(root, text='VPN protocol choice:').place(x=270, y=170)
+
+frame = Frame(root, width=50, height=0)
+frame.place(x=0, y=200)
+protocols_rb = [
+    ('Wireguard', 'Wireguard'),
+    ('IPsec', 'IPsec'),
+]
+for text, val in protocols_rb:
+	rb_group = Radiobutton(frame, text=text, variable=PROTOCOL_NAME, value=val).pack(side='left', ipadx=125)
+
+
+root.mainloop()
