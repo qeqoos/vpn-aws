@@ -12,19 +12,20 @@ AWS_REGION = 'eu-west-1'  # user enters
 # VPC_ID = 'vpc-05a63425b4ac937e4'  # eu-central, user enters
 # VPC_ID = 'vpc-81cf74f8'  # eu-west-1
 VPC_ID = 'vpc-0e128b2f79b9e772d' 
-SUBNET_CHOICE = 2   # user chooses form drop-down list
-SSH_PORT = '12345' # user enters
-CREATION_TIMEOUT_MINS = 5  # user enters
+
+SSH_PORT = ''
+CREATION_TIMEOUT_MINS = 5 
+PROTOCOL_NAME = 'Wireguard' # default
 
 # WG
-# PROTOCOL_NAME = 'Wireguard' # user chooses using radio button
-WG_PORT = '51820' # user enters, create check for 49152-65530
-PEER_NAME = 'pablo' # user enters
+# PROTOCOL_NAME = 'Wireguard'
+WG_PORT = ''
+PEER_NAME = '' 
 
 # IPsec
-PROTOCOL_NAME = 'IPsec'  # user chooses using radio button
-USERNAME = 'pablo'  # user enters
-PASSWORD = '12345'  # user enters
+# PROTOCOL_NAME = 'IPsec'  
+USERNAME = ''  
+PASSWORD = ''  
 
 Config = botocore.config.Config(region_name=AWS_REGION)
 
@@ -190,12 +191,12 @@ def get_ami():
         print('No suitable AMI found. Check filters.')
 
 
-def get_instance_id(SUBNET_CHOICE, subnet_list):
+def get_instance_id():
     check_instances_apicall = client.describe_instances(
         Filters=[
             {
                 'Name': 'subnet-id',
-                'Values': [subnet_list[SUBNET_CHOICE]]
+                'Values': [subnet_box.get()]
             },
             {
                 'Name': 'instance-state-name',
@@ -266,14 +267,15 @@ def get_profile_name_arn():
     
 
 def create_ec2_instance_main():
-    subnet_list = get_public_subnets()
-    instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)
+    check_creds()
+    check_ports()
+    check_fields()
 
+    instance_id = get_instance_id()
     if instance_id:
-        print(f'{PROTOCOL_NAME} VPN server already exists in subnet {subnet_list[SUBNET_CHOICE]}.')
-        print(f'InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}')
+        showinfo('Info', f'{PROTOCOL_NAME} VPN server already exists in subnet {subnet_box.get()}. InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}')
     else:
-        print(f'No {PROTOCOL_NAME} VPN server found in subnet {subnet_list[SUBNET_CHOICE]}, creating one...') 
+        print(f'No {PROTOCOL_NAME} VPN server found in subnet {subnet_box.get()}, creating one...') 
         
         image_id = get_ami()
         security_group_id = configure_security_groups()
@@ -314,7 +316,7 @@ def create_ec2_instance_main():
                 ImageId=image_id,
                 InstanceType='t2.micro',
                 KeyName=key_name,
-                # DryRun=True,
+                DryRun=True,
                 MaxCount=1,
                 MinCount=1,
                 IamInstanceProfile={
@@ -331,8 +333,7 @@ def create_ec2_instance_main():
                         'Groups': [
                             security_group_id,
                         ],
-                        # 'PrivateIpAddress': vpn_instance_private_ip,
-                        'SubnetId': subnet_list[SUBNET_CHOICE],
+                        'SubnetId': subnet_box.get(),
                         'InterfaceType': 'interface',
                     },
                 ],
@@ -359,9 +360,9 @@ def create_ec2_instance_main():
                 ],
             )
         except Exception as e:
-            print(f'Error in server configuration - {e}')
+            showerror('Error', f'Error in server configuration. Can\'t create server in subnet {subnet_box.get()}.')
         
-        instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)
+        instance_id = get_instance_id()
         timeout_check = 0 # 4 minutes creation timeout
         while True:
             get_status_apicall = client.describe_instance_status(
@@ -382,12 +383,12 @@ def create_ec2_instance_main():
                 ],
             )
             if get_status_apicall['InstanceStatuses']:
-                print('Instance is ready.')
-                instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)
+                showinfo('Success', 'Instance is ready.')
+                instance_id = get_instance_id()
                 print(f'InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}')
                 break
             elif timeout_check == CREATION_TIMEOUT_MINS * 6:
-                print(f'Instance creation exceeded {CREATION_TIMEOUT_MINS} minutes. Stopping...')
+                showerror('Timeout', f'Instance creation exceeded {CREATION_TIMEOUT_MINS} minutes. Stopping...')
                 break
             else: 
                 print('Instance still being created...')
@@ -395,13 +396,9 @@ def create_ec2_instance_main():
                 timeout_check += 1
 
 
-# create_ec2_instance_main()
-
-
 def create_peer():
     ssm_client = boto3.client('ssm', config=Config)  # Need your credentials here
-    subnet_list = get_public_subnets()
-    instance_id = get_instance_id(SUBNET_CHOICE, subnet_list)[0]['Instances'][0]['InstanceId']
+    instance_id = get_instance_id()[0]['Instances'][0]['InstanceId']
     
     if instance_id:
         vpc_cidr_block = client.describe_vpcs(VpcIds=[VPC_ID])['Vpcs'][0]['CidrBlock']
@@ -433,11 +430,7 @@ def create_peer():
         )
         return output['StandardOutputContent']
     else:
-        print(f'No {PROTOCOL_NAME} VPN server found. Please, create one.')
-
-
-# print(create_peer())
-
+        showerror('Error', f'No {PROTOCOL_NAME} VPN server found. Please, create one.')
 
 # aws iam delete-role --role-name EC2SSMrole
 # aws iam delete-instance-profile --instance-profile-name EC2SSMprofile
@@ -445,7 +438,7 @@ def create_peer():
 
 root = Tk()
 root.title('vpn-aws')
-root.geometry('700x500')
+root.geometry('700x700')
 
 aws_access_key = Entry(root, width=30)  
 aws_secret_key = Entry(root, width=30)  
@@ -488,14 +481,112 @@ Button(root, text='Get public subnets', command=get_public_subnets).place(x=500,
 
 Label(root, text='VPN protocol choice:').place(x=270, y=170)
 
+def wireguard_choice():
+    global PROTOCOL_NAME
+    wireguard_port.configure(state='normal')
+    wireguard_peer_name.configure(state='normal')
+    ipsec_username.configure(state='disabled')
+    ipsec_password.configure(state='disabled')
+
+    wireguard_port.update()
+    wireguard_peer_name.update()
+    ipsec_username.update()
+    ipsec_password.update()
+    PROTOCOL_NAME = 'Wireguard'
+
+
+def ipsec_choice():
+    global PROTOCOL_NAME
+    wireguard_port.configure(state='disabled')
+    wireguard_peer_name.configure(state='disabled')
+    ipsec_username.configure(state='normal')
+    ipsec_password.configure(state='normal')
+    
+    wireguard_port.update()
+    wireguard_peer_name.update()
+    ipsec_username.update()
+    ipsec_password.update()
+    PROTOCOL_NAME = 'IPsec'
+
+
 frame = Frame(root, width=50, height=0)
 frame.place(x=0, y=200)
-protocols_rb = [
-    ('Wireguard', 'Wireguard'),
-    ('IPsec', 'IPsec'),
-]
-for text, val in protocols_rb:
-	rb_group = Radiobutton(frame, text=text, variable=PROTOCOL_NAME, value=val).pack(side='left', ipadx=125)
+var = StringVar()
+rb_wireguard = Radiobutton(frame, text='Wireguard', variable=var, value='0', command=wireguard_choice).pack(side='left', ipadx=125)
+rb_ipsec = Radiobutton(frame, text='IPsec', variable=var, value='1', command=ipsec_choice).pack(side='left', ipadx=125)
 
+wireguard_port = Entry(root, width=10)
+wireguard_peer_name = Entry(root, width=20)
+
+Label(root, text='Port:').place(x=30, y=250)
+wireguard_port.place(x=130, y=250)
+
+Label(root, text='Peer name:').place(x=30, y=280)
+wireguard_peer_name.place(x=130, y=280)
+
+ipsec_username = Entry(root, width=15)
+ipsec_password = Entry(root, width=15, show='*')
+
+Label(root, text='Username:').place(x=400, y=250)
+ipsec_username.place(x=500, y=250)
+
+Label(root, text='Password:').place(x=400, y=280)
+ipsec_password.place(x=500, y=280)
+
+ipsec_username.configure(state='disabled')
+ipsec_password.configure(state='disabled')
+
+p = StringVar()
+p.set('22')
+ssh_port = Entry(root, textvariable=p, width=7)
+Label(root, text='SSH port:').place(x=280, y=380)
+ssh_port.place(x=350, y=380)
+
+def check_ports():
+    global SSH_PORT, WG_PORT
+
+    if ssh_port.get() and int(ssh_port.get()) in list(range(1024, 32767)) + [22]:
+        SSH_PORT = ssh_port.get()
+        print(f'SSH port to use: {SSH_PORT}')
+    else:
+        try:
+            raise ValueError('SSH port should be valid (22 or 1024-32767)')
+        except Exception:
+            showerror('Error', 'SSH port should be valid (22 or 1024-32767)')
+    
+    print(PROTOCOL_NAME)
+    if PROTOCOL_NAME == 'Wireguard':
+        if wireguard_port.get() and int(wireguard_port.get()) in list(range(49152, 65530)):
+            WG_PORT = wireguard_port.get()
+            print(f'Wireguard port to use: {WG_PORT}')
+        else:
+            try:
+                raise ValueError('Wireguard port should be valid (49152-65530)')
+            except Exception:
+                showerror('Error', 'Wireguard port should be valid (49152-65530)')
+
+
+def check_fields():
+    global PEER_NAME, USERNAME, PASSWORD
+    if PROTOCOL_NAME == 'Wireguard':
+        if wireguard_peer_name.get().isalnum():
+            PEER_NAME = wireguard_peer_name.get()
+        else:
+            try:
+                raise ValueError('Provide peer name without special characters')
+            except Exception:
+                showerror('Error', 'Provide peer name without special characters')
+    else: 
+        if ipsec_username.get().isalnum() and ipsec_password.get().isalnum():
+            USERNAME = ipsec_username.get()
+            PASSWORD = ipsec_password.get()
+        else:
+            try:
+                raise ValueError('Provide username and password without special characters')
+            except Exception:
+                showerror('Error', 'Provide username and password without special characters')
+
+
+Button(root, text='CREATE SERVER', command=create_ec2_instance_main, width=20, height=3, borderwidth=10).place(x=250, y=450)
 
 root.mainloop()
