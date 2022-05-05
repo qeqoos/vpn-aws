@@ -18,12 +18,10 @@ CREATION_TIMEOUT_MINS = 5
 PROTOCOL_NAME = 'Wireguard' # default
 
 # WG
-# PROTOCOL_NAME = 'Wireguard'
 WG_PORT = ''
 PEER_NAME = '' 
 
 # IPsec
-# PROTOCOL_NAME = 'IPsec'  
 USERNAME = ''  
 PASSWORD = ''  
 
@@ -91,9 +89,9 @@ def configure_security_groups():
 
     if list_sgs_apicall['SecurityGroups']:
         created_sg_id = list_sgs_apicall['SecurityGroups'][0]['GroupId']
-        print(f'{PROTOCOL_NAME} SG already exists in VPC.')
+        log_box.insert(END, f'{PROTOCOL_NAME} SG already exists in VPC.\n')
     else: 
-        print(f'No {PROTOCOL_NAME} SG found, creating one...')
+        log_box.insert(END, f'No {PROTOCOL_NAME} SG found, creating one...\n')
         try:
             create_sg_apicall = client.create_security_group(
                 VpcId=VPC_ID,
@@ -165,7 +163,7 @@ def configure_security_groups():
                     ],
                 )
         except Exception as e:
-            print(f'Error in security group configuration - {e}')
+            showerror('Error' , f'Error in security group configuration - {e}')
 
     return created_sg_id
 
@@ -185,10 +183,10 @@ def get_ami():
             ]
         )
         ami = list_images_apicall['Images'][0]['ImageId']
-        print('Found AMI.')
+        log_box.insert(END, 'Found AMI.\n')
         return ami
     except IndexError:
-        print('No suitable AMI found. Check filters.')
+        showerror('Error', 'No suitable AMI found. Check filters.\n')
 
 
 def get_instance_id():
@@ -224,10 +222,9 @@ def create_role():
     iam_client = boto3.client('iam')
     try:
         role_check_apicall = iam_client.get_role(RoleName='EC2SSMrole')
-        print('Role already exists.')
+        log_box.insert(END, 'Role already exists.\n')
     except Exception as e:
-        print(e)
-        print('Creating role...')
+        log_box.insert(END, 'Creating role...\n')
         assume_role_policy_document = json.dumps({
             "Version": "2012-10-17",
             "Statement": [
@@ -255,10 +252,9 @@ def get_profile_name_arn():
     iam_client = boto3.client('iam')
     try:
         profile_check_apicall = iam_client.get_instance_profile(InstanceProfileName='EC2SSMprofile')
-        print('Instance profile already exists.')
+        log_box.insert(END, 'Instance profile already exists.\n')
     except Exception as e:
-        print(e)
-        print('Creating profile and attaching role to it...')
+        log_box.insert(END, 'Creating profile and attaching role to it...\n')
         create_profile_apicall = iam_client.create_instance_profile(InstanceProfileName='EC2SSMprofile')
         add_role_profile_apicall = iam_client.add_role_to_instance_profile(InstanceProfileName='EC2SSMprofile', RoleName='EC2SSMrole')
         profile_check_apicall = iam_client.get_instance_profile(InstanceProfileName='EC2SSMprofile')
@@ -269,13 +265,12 @@ def get_profile_name_arn():
 def create_ec2_instance_main():
     check_creds()
     check_ports()
-    check_fields()
 
     instance_id = get_instance_id()
     if instance_id:
         showinfo('Info', f'{PROTOCOL_NAME} VPN server already exists in subnet {subnet_box.get()}. InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}')
     else:
-        print(f'No {PROTOCOL_NAME} VPN server found in subnet {subnet_box.get()}, creating one...') 
+        log_box.insert(END, f'No {PROTOCOL_NAME} VPN server found in subnet {subnet_box.get()}, creating one...\n') 
         
         image_id = get_ami()
         security_group_id = configure_security_groups()
@@ -298,7 +293,7 @@ def create_ec2_instance_main():
                 init_install = init_install.replace('*ssh_port*', SSH_PORT)
 
         time.sleep(10) # Window for API calls to settle
-        print('Prerequisites finshed. Started creation of server...')
+        log_box.insert(END, 'Prerequisites finshed. Started creation of server...\n')
         try:     
             server = ec2.create_instances(
                 BlockDeviceMappings=[
@@ -385,22 +380,40 @@ def create_ec2_instance_main():
             if get_status_apicall['InstanceStatuses']:
                 showinfo('Success', 'Instance is ready.')
                 instance_id = get_instance_id()
-                print(f'InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}')
+                log_box.insert(END, f'InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}\n')
                 break
             elif timeout_check == CREATION_TIMEOUT_MINS * 6:
                 showerror('Timeout', f'Instance creation exceeded {CREATION_TIMEOUT_MINS} minutes. Stopping...')
                 break
             else: 
-                print('Instance still being created...')
+                log_box.insert(END, 'Instance still being created...\n')
                 time.sleep(10)
                 timeout_check += 1
 
 
 def create_peer():
+    check_fields()
     ssm_client = boto3.client('ssm', config=Config)  # Need your credentials here
     instance_id = get_instance_id()[0]['Instances'][0]['InstanceId']
+    get_status_apicall = client.describe_instance_status(
+                InstanceIds=[instance_id[0]['Instances'][0]['InstanceId']],
+                Filters=[
+                    {
+                        'Name': 'instance-state-name',
+                        'Values': ['running']
+                    },
+                    {
+                        'Name': 'instance-status.status',
+                        'Values': ['ok']
+                    },
+                    {
+                        'Name': 'system-status.status',
+                        'Values': ['ok']
+                    },
+                ],
+            )
     
-    if instance_id:
+    if get_status_apicall['InstanceStatuses']:
         vpc_cidr_block = client.describe_vpcs(VpcIds=[VPC_ID])['Vpcs'][0]['CidrBlock']
         used_octets = vpc_cidr_block.split('.')[0] + '.' + vpc_cidr_block.split('.')[1]
         peer_private_ips = used_octets + '.69.0/24'
@@ -428,6 +441,7 @@ def create_peer():
             CommandId=command_id,
             InstanceId=instance_id
         )
+        log_box.insert(END, output['StandardOutputContent'] + '\n')
         return output['StandardOutputContent']
     else:
         showerror('Error', f'No {PROTOCOL_NAME} VPN server found. Please, create one.')
@@ -438,7 +452,7 @@ def create_peer():
 
 root = Tk()
 root.title('vpn-aws')
-root.geometry('700x700')
+root.geometry('700x900')
 
 aws_access_key = Entry(root, width=30)  
 aws_secret_key = Entry(root, width=30)  
@@ -542,23 +556,28 @@ ssh_port = Entry(root, textvariable=p, width=7)
 Label(root, text='SSH port:').place(x=280, y=380)
 ssh_port.place(x=350, y=380)
 
+Button(root, text='CREATE SERVER', command=create_ec2_instance_main, width=15, height=2, borderwidth=8).place(x=140, y=450)
+Button(root, text='CREATE PROFILE', command=create_peer, width=15, height=2, borderwidth=8).place(x=400, y=450)
+
+log_box = Text(root, height=15, width=40)
+log_box.place(x=140, y=550)
+
 def check_ports():
     global SSH_PORT, WG_PORT
 
     if ssh_port.get() and int(ssh_port.get()) in list(range(1024, 32767)) + [22]:
         SSH_PORT = ssh_port.get()
-        print(f'SSH port to use: {SSH_PORT}')
+        log_box.insert(END, f'SSH port to use: {SSH_PORT}\n')
     else:
         try:
             raise ValueError('SSH port should be valid (22 or 1024-32767)')
         except Exception:
             showerror('Error', 'SSH port should be valid (22 or 1024-32767)')
     
-    print(PROTOCOL_NAME)
     if PROTOCOL_NAME == 'Wireguard':
         if wireguard_port.get() and int(wireguard_port.get()) in list(range(49152, 65530)):
             WG_PORT = wireguard_port.get()
-            print(f'Wireguard port to use: {WG_PORT}')
+            log_box.insert(END, f'Wireguard port to use: {WG_PORT}\n')
         else:
             try:
                 raise ValueError('Wireguard port should be valid (49152-65530)')
@@ -586,7 +605,5 @@ def check_fields():
             except Exception:
                 showerror('Error', 'Provide username and password without special characters')
 
-
-Button(root, text='CREATE SERVER', command=create_ec2_instance_main, width=20, height=3, borderwidth=10).place(x=250, y=450)
 
 root.mainloop()
