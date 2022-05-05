@@ -8,10 +8,11 @@ import time
 from datetime import datetime
 import json
 
-AWS_REGION = 'eu-west-1'  # user enters
+AWS_REGION = ''  # user enters
 # VPC_ID = 'vpc-05a63425b4ac937e4'  # eu-central, user enters
 # VPC_ID = 'vpc-81cf74f8'  # eu-west-1
-VPC_ID = 'vpc-0e128b2f79b9e772d' 
+# VPC_ID = 'vpc-0e128b2f79b9e772d' 
+VPC_ID = ''
 
 SSH_PORT = ''
 CREATION_TIMEOUT_MINS = 5 
@@ -25,17 +26,11 @@ PEER_NAME = ''
 USERNAME = ''  
 PASSWORD = ''  
 
-Config = botocore.config.Config(region_name=AWS_REGION)
-
-client = boto3.client(
-    "ec2",
-    config=Config
-)
-
-ec2 = boto3.resource('ec2', region_name=AWS_REGION)
+client = ''
 
 
 def get_public_subnets():
+    global VPC_ID
     check_creds()
     public_subnets = []
     VPC_ID = vpc_id.get()
@@ -265,6 +260,7 @@ def get_profile_name_arn():
 def create_ec2_instance_main():
     check_creds()
     check_ports()
+    ec2 = boto3.resource('ec2', region_name=AWS_REGION)
 
     instance_id = get_instance_id()
     if instance_id:
@@ -311,7 +307,7 @@ def create_ec2_instance_main():
                 ImageId=image_id,
                 InstanceType='t2.micro',
                 KeyName=key_name,
-                DryRun=True,
+                # DryRun=True,
                 MaxCount=1,
                 MinCount=1,
                 IamInstanceProfile={
@@ -393,25 +389,26 @@ def create_ec2_instance_main():
 
 def create_peer():
     check_fields()
+    Config = botocore.config.Config(region_name=AWS_REGION)
     ssm_client = boto3.client('ssm', config=Config)  # Need your credentials here
     instance_id = get_instance_id()[0]['Instances'][0]['InstanceId']
     get_status_apicall = client.describe_instance_status(
-                InstanceIds=[instance_id[0]['Instances'][0]['InstanceId']],
-                Filters=[
-                    {
-                        'Name': 'instance-state-name',
-                        'Values': ['running']
-                    },
-                    {
-                        'Name': 'instance-status.status',
-                        'Values': ['ok']
-                    },
-                    {
-                        'Name': 'system-status.status',
-                        'Values': ['ok']
-                    },
-                ],
-            )
+        InstanceIds=[instance_id],
+        Filters=[
+            {
+                'Name': 'instance-state-name',
+                'Values': ['running']
+            },
+            {
+                'Name': 'instance-status.status',
+                'Values': ['ok']
+            },
+            {
+                'Name': 'system-status.status',
+                'Values': ['ok']
+            },
+        ],
+    )
     
     if get_status_apicall['InstanceStatuses']:
         vpc_cidr_block = client.describe_vpcs(VpcIds=[VPC_ID])['Vpcs'][0]['CidrBlock']
@@ -468,10 +465,18 @@ Label(root, text='AWS region:').place(x=10, y=70)
 aws_region.place(x=150, y=70)
 
 def check_creds():
+    global ec2, client, AWS_REGION
+    AWS_REGION = aws_region.get()
     try:
-        Config = botocore.config.Config(region_name=aws_region.get())
+        Config = botocore.config.Config(region_name=AWS_REGION)
         sts = boto3.client(
             'sts',
+            aws_access_key_id=aws_access_key.get(),
+            aws_secret_access_key=aws_secret_key.get(),
+            config=Config
+        )
+        client = boto3.client(
+            'ec2',
             aws_access_key_id=aws_access_key.get(),
             aws_secret_access_key=aws_secret_key.get(),
             config=Config

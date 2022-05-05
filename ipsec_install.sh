@@ -1,7 +1,4 @@
 #!/bin/bash
-# Copyright (C) 2021-2022 Lin Song <linsongui@gmail.com>
-# This work is licensed under the Creative Commons Attribution-ShareAlike 3.0
-# Unported License: http://creativecommons.org/licenses/by-sa/3.0/
 
 YOUR_IPSEC_PSK='' # - IPsec pre-shared key, VPN username and password
 YOUR_USERNAME='' # - All values MUST be placed inside 'single quotes'
