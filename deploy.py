@@ -292,8 +292,10 @@ def create_ec2_instance_main():
                 init_install = install_script.read()
                 init_install = init_install.replace('*ssh_port*', SSH_PORT)
 
-        time.sleep(10) # Window for API calls to settle
-        log_box.insert(END, 'Prerequisites finshed. Started creation of server...\n')
+        def preflight_delay():
+            log_box.insert(END, 'Prerequisites finshed. Started creation of server...\n')
+            
+        root.after(10000, preflight_delay)  # Window for API calls to settle
         try:     
             server = ec2.create_instances(
                 BlockDeviceMappings=[
@@ -360,7 +362,8 @@ def create_ec2_instance_main():
         
         instance_id = get_instance_id()
         timeout_check = 0 # 4 minutes creation timeout
-        while True:
+        def readiness_check():
+            nonlocal timeout_check, instance_id
             get_status_apicall = client.describe_instance_status(
                 InstanceIds=[instance_id[0]['Instances'][0]['InstanceId']],
                 Filters=[
@@ -382,14 +385,16 @@ def create_ec2_instance_main():
                 showinfo('Success', 'Instance is ready.')
                 instance_id = get_instance_id()
                 log_box.insert(END, f'InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}\n')
-                break
+                return True
             elif timeout_check == CREATION_TIMEOUT_MINS * 6:
                 showerror('Timeout', f'Instance creation exceeded {CREATION_TIMEOUT_MINS} minutes. Stopping...')
-                break
+                return False
             else: 
                 log_box.insert(END, 'Instance still being created...\n')
-                time.sleep(10)
+                root.after(10000, readiness_check)
                 timeout_check += 1
+
+        root.after(10000, readiness_check)
 
 
 def create_peer():
@@ -400,7 +405,7 @@ def create_peer():
         return False
 
     Config = botocore.config.Config(region_name=AWS_REGION)
-    ssm_client = boto3.client('ssm', config=Config)  # Need your credentials here
+    ssm_client = boto3.client('ssm', config=Config) 
     instance_id = get_instance_id()[0]['Instances'][0]['InstanceId']
     get_status_apicall = client.describe_instance_status(
         InstanceIds=[instance_id],
@@ -456,23 +461,43 @@ def create_peer():
 # aws iam delete-role --role-name EC2SSMrole
 # aws iam delete-instance-profile --instance-profile-name EC2SSMprofile
 
+########## INTERFACE ##########
 
 root = Tk()
+root.iconbitmap('cloud-lock.ico')
 root.title('vpn-aws')
-root.geometry('700x900')
 
-aws_access_key = Entry(root, width=30)  
-aws_secret_key = Entry(root, width=30)  
-aws_region = Entry(root, width=10)
+window_height = 825
+window_width = 700
 
-Label(root, text='AWS access key:').place(x=10, y=10)
-aws_access_key.place(x=150, y=10)
+root.geometry(f'{window_width}x{window_height}')
+root.resizable(False, False)
 
-Label(root, text='AWS secret key:').place(x=10, y=40)
-aws_secret_key.place(x=150, y=40)
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
 
-Label(root, text='AWS region:').place(x=10, y=70)
-aws_region.place(x=150, y=70)
+x_cordinate = int((screen_width/2) - (window_width/2))
+y_cordinate = int((screen_height/2) - (window_height/2))
+
+root.geometry("{}x{}+{}+{}".format(window_width, window_height, x_cordinate, y_cordinate))
+
+aws_access_key = Entry(root, width=25)  
+aws_secret_key = Entry(root, width=25, show='\U00002022')
+aws_region = Entry(root, width=25)
+
+Label(root, text='AWS access key:').place(x=20, y=20)
+aws_access_key.place(x=140, y=20)
+
+Label(root, text='AWS secret key:').place(x=20, y=50)
+aws_secret_key.place(x=140, y=50)
+
+secret_key_show = Button(root, text='\U0001F441')
+secret_key_show.place(x=350, y=45)
+secret_key_show.bind('<ButtonPress-1>', lambda event: aws_secret_key.config(show=''))
+secret_key_show.bind('<ButtonRelease-1>', lambda event: aws_secret_key.config(show='\U00002022'))
+
+Label(root, text='AWS region:').place(x=20, y=80)
+aws_region.place(x=140, y=80)
 
 def check_creds():
     global ec2, client, AWS_REGION
@@ -498,18 +523,17 @@ def check_creds():
     
     return True
 
+vpc_id = Entry(root, width=25)
 
-vpc_id = Entry(root, width=20)
+Label(root, text='VPC ID:').place(x=20, y=110)
+vpc_id.place(x=140, y=110)
 
-Label(root, text='VPC ID:').place(x=10, y=100)
-vpc_id.place(x=150, y=100)
-
-Label(root, text='Subnet ID:').place(x=400, y=100)
+Label(root, text='Subnet ID:').place(x=400, y=110)
 subnet_box = ttk.Combobox(root, values=['-'])
-subnet_box.place(x=480, y=100)
+subnet_box.place(x=480, y=110)
 subnet_box.current(0)
 
-Button(root, text='Get public subnets', command=get_public_subnets).place(x=500, y=30)
+Button(root, text='Get public subnets', command=get_public_subnets).place(x=500, y=40)
 
 Label(root, text='VPN protocol choice:').place(x=270, y=170)
 
@@ -526,7 +550,6 @@ def wireguard_choice():
     ipsec_password.update()
     PROTOCOL_NAME = 'Wireguard'
 
-
 def ipsec_choice():
     global PROTOCOL_NAME
     wireguard_port.configure(state='disabled')
@@ -540,24 +563,23 @@ def ipsec_choice():
     ipsec_password.update()
     PROTOCOL_NAME = 'IPsec'
 
-
 frame = Frame(root, width=50, height=0)
 frame.place(x=0, y=200)
 var = StringVar()
 rb_wireguard = Radiobutton(frame, text='Wireguard', variable=var, value='0', command=wireguard_choice).pack(side='left', ipadx=125)
 rb_ipsec = Radiobutton(frame, text='IPsec', variable=var, value='1', command=ipsec_choice).pack(side='left', ipadx=125)
 
-wireguard_port = Entry(root, width=10)
-wireguard_peer_name = Entry(root, width=20)
+wireguard_port = Entry(root, width=15)
+wireguard_peer_name = Entry(root, width=15)
 
-Label(root, text='Port:').place(x=30, y=250)
-wireguard_port.place(x=130, y=250)
+Label(root, text='Port:').place(x=20, y=250)
+wireguard_port.place(x=110, y=250)
 
-Label(root, text='Peer name:').place(x=30, y=280)
-wireguard_peer_name.place(x=130, y=280)
+Label(root, text='Peer name:').place(x=20, y=280)
+wireguard_peer_name.place(x=110, y=280)
 
 ipsec_username = Entry(root, width=15)
-ipsec_password = Entry(root, width=15, show='*')
+ipsec_password = Entry(root, width=15, show='\U00002022')
 
 Label(root, text='Username:').place(x=400, y=250)
 ipsec_username.place(x=500, y=250)
@@ -568,17 +590,22 @@ ipsec_password.place(x=500, y=280)
 ipsec_username.configure(state='disabled')
 ipsec_password.configure(state='disabled')
 
+ipsec_show_pass = Button(root, text='\U0001F441')
+ipsec_show_pass.place(x=630, y=275)
+ipsec_show_pass.bind('<ButtonPress-1>', lambda event: ipsec_password.config(show=''))
+ipsec_show_pass.bind('<ButtonRelease-1>', lambda event: ipsec_password.config(show='\U00002022'))
+
 p = StringVar()
 p.set('22')
 ssh_port = Entry(root, textvariable=p, width=7)
-Label(root, text='SSH port:').place(x=280, y=380)
-ssh_port.place(x=350, y=380)
+Label(root, text='SSH port:').place(x=280, y=345)
+ssh_port.place(x=350, y=345)
 
-Button(root, text='CREATE SERVER', command=create_ec2_instance_main, width=15, height=2, borderwidth=8).place(x=140, y=450)
-Button(root, text='CREATE PROFILE', command=create_peer, width=15, height=2, borderwidth=8).place(x=400, y=450)
+Button(root, text='CREATE SERVER', command=create_ec2_instance_main, width=14, height=1).place(x=140, y=430)
+Button(root, text='CREATE PROFILE', command=create_peer, width=14, height=1).place(x=400, y=430)
 
 log_box = ScrolledText(root, height=15, width=64)
-log_box.place(x=20, y=570)
+log_box.place(x=20, y=500)
 
 def check_ports():
     global SSH_PORT, WG_PORT
@@ -605,7 +632,6 @@ def check_ports():
                 return False
     return True
 
-
 def check_fields():
     global PEER_NAME, USERNAME, PASSWORD
     if PROTOCOL_NAME == 'Wireguard':
@@ -629,6 +655,5 @@ def check_fields():
                 return False
     
     return True
-
 
 root.mainloop()
