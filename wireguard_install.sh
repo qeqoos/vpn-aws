@@ -4,6 +4,7 @@ apt update && apt upgrade -y
 apt install -y wireguard
 
 sed -i "s/#Port 22/Port *ssh_port*/g" /etc/ssh/sshd_config
+systemctl restart ssh
 
 wg genkey | tee /etc/wireguard/privatekey | wg pubkey | tee /etc/wireguard/publickey
 chmod 600 /etc/wireguard/privatekey

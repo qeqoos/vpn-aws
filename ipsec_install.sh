@@ -7,6 +7,7 @@ YOUR_PASSWORD='' # - DO NOT use these special characters within values: \ " '
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 sed -i "s/#Port 22/Port *ssh_port*/g" /etc/ssh/sshd_config # change default ssh port
+systemctl restart ssh
 
 exiterr() { echo "Error: $1" >&2; exit 1; }
 

@@ -1,6 +1,7 @@
 from tkinter import *
 from tkinter import ttk
 from tkinter.messagebox import *
+from tkinter.scrolledtext import *
 
 import boto3
 import botocore
@@ -9,9 +10,6 @@ from datetime import datetime
 import json
 
 AWS_REGION = ''  # user enters
-# VPC_ID = 'vpc-05a63425b4ac937e4'  # eu-central, user enters
-# VPC_ID = 'vpc-81cf74f8'  # eu-west-1
-# VPC_ID = 'vpc-0e128b2f79b9e772d' 
 VPC_ID = ''
 
 SSH_PORT = ''
@@ -31,7 +29,9 @@ client = ''
 
 def get_public_subnets():
     global VPC_ID
-    check_creds()
+    if not check_creds():
+        return False
+
     public_subnets = []
     VPC_ID = vpc_id.get()
     list_route_tables_apicall = client.describe_route_tables(
@@ -258,8 +258,12 @@ def get_profile_name_arn():
     
 
 def create_ec2_instance_main():
-    check_creds()
-    check_ports()
+    if not check_creds():
+        return False
+
+    if not check_ports():
+        return False
+    
     ec2 = boto3.resource('ec2', region_name=AWS_REGION)
 
     instance_id = get_instance_id()
@@ -352,6 +356,7 @@ def create_ec2_instance_main():
             )
         except Exception as e:
             showerror('Error', f'Error in server configuration. Can\'t create server in subnet {subnet_box.get()}.')
+            return False
         
         instance_id = get_instance_id()
         timeout_check = 0 # 4 minutes creation timeout
@@ -388,7 +393,12 @@ def create_ec2_instance_main():
 
 
 def create_peer():
-    check_fields()
+    if not check_creds():
+        return False
+
+    if not check_fields():
+        return False
+
     Config = botocore.config.Config(region_name=AWS_REGION)
     ssm_client = boto3.client('ssm', config=Config)  # Need your credentials here
     instance_id = get_instance_id()[0]['Instances'][0]['InstanceId']
@@ -484,6 +494,9 @@ def check_creds():
         sts.get_caller_identity()
     except Exception:
         showerror('Error', 'Credentials are not valid. Check your AWS policies, credentials or region.')
+        return False
+    
+    return True
 
 
 vpc_id = Entry(root, width=20)
@@ -564,8 +577,8 @@ ssh_port.place(x=350, y=380)
 Button(root, text='CREATE SERVER', command=create_ec2_instance_main, width=15, height=2, borderwidth=8).place(x=140, y=450)
 Button(root, text='CREATE PROFILE', command=create_peer, width=15, height=2, borderwidth=8).place(x=400, y=450)
 
-log_box = Text(root, height=15, width=40)
-log_box.place(x=140, y=550)
+log_box = ScrolledText(root, height=15, width=64)
+log_box.place(x=20, y=570)
 
 def check_ports():
     global SSH_PORT, WG_PORT
@@ -578,6 +591,7 @@ def check_ports():
             raise ValueError('SSH port should be valid (22 or 1024-32767)')
         except Exception:
             showerror('Error', 'SSH port should be valid (22 or 1024-32767)')
+            return False
     
     if PROTOCOL_NAME == 'Wireguard':
         if wireguard_port.get() and int(wireguard_port.get()) in list(range(49152, 65530)):
@@ -588,6 +602,8 @@ def check_ports():
                 raise ValueError('Wireguard port should be valid (49152-65530)')
             except Exception:
                 showerror('Error', 'Wireguard port should be valid (49152-65530)')
+                return False
+    return True
 
 
 def check_fields():
@@ -600,6 +616,7 @@ def check_fields():
                 raise ValueError('Provide peer name without special characters')
             except Exception:
                 showerror('Error', 'Provide peer name without special characters')
+                return False
     else: 
         if ipsec_username.get().isalnum() and ipsec_password.get().isalnum():
             USERNAME = ipsec_username.get()
@@ -609,6 +626,9 @@ def check_fields():
                 raise ValueError('Provide username and password without special characters')
             except Exception:
                 showerror('Error', 'Provide username and password without special characters')
+                return False
+    
+    return True
 
 
 root.mainloop()
