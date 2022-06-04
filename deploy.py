@@ -214,7 +214,6 @@ def get_instance_id():
 
 
 def create_role():
-    iam_client = boto3.client('iam')
     try:
         role_check_apicall = iam_client.get_role(RoleName='EC2SSMrole')
         log_box.insert(END, 'Role already exists.\n')
@@ -244,7 +243,6 @@ def create_role():
 
 
 def get_profile_name_arn():
-    iam_client = boto3.client('iam')
     try:
         profile_check_apicall = iam_client.get_instance_profile(InstanceProfileName='EC2SSMprofile')
         log_box.insert(END, 'Instance profile already exists.\n')
@@ -264,11 +262,9 @@ def create_ec2_instance_main():
     if not check_ports():
         return False
     
-    ec2 = boto3.resource('ec2', region_name=AWS_REGION)
-
     instance_id = get_instance_id()
     if instance_id:
-        showinfo('Info', f'{PROTOCOL_NAME} VPN server already exists in subnet {subnet_box.get()}. InstanceId is {instance_id[0]["Instances"][0]["InstanceId"]}, public IP {instance_id[0]["Instances"][0]["PublicIpAddress"]}')
+        showinfo('Info', f'{PROTOCOL_NAME} VPN server already exists in subnet {subnet_box.get()}.')
     else:
         log_box.insert(END, f'No {PROTOCOL_NAME} VPN server found in subnet {subnet_box.get()}, creating one...\n') 
         
@@ -357,7 +353,7 @@ def create_ec2_instance_main():
                 ],
             )
         except Exception as e:
-            showerror('Error', f'Error in server configuration. Can\'t create server in subnet {subnet_box.get()}.')
+            showerror('Error', f'Error in server configuration. Can\'t create server in subnet {subnet_box.get()}.\n{e}')
             return False
         
         instance_id = get_instance_id()
@@ -404,8 +400,6 @@ def create_peer():
     if not check_fields():
         return False
 
-    Config = botocore.config.Config(region_name=AWS_REGION)
-    ssm_client = boto3.client('ssm', config=Config) 
     instance_id = get_instance_id()[0]['Instances'][0]['InstanceId']
     get_status_apicall = client.describe_instance_status(
         InstanceIds=[instance_id],
@@ -464,7 +458,7 @@ def create_peer():
 ########## INTERFACE ##########
 
 root = Tk()
-root.iconbitmap('cloud-lock.ico')
+root.iconbitmap(default='./cloud-lock.ico')
 root.title('vpn-aws')
 
 window_height = 825
@@ -500,7 +494,7 @@ Label(root, text='AWS region:').place(x=20, y=80)
 aws_region.place(x=140, y=80)
 
 def check_creds():
-    global ec2, client, AWS_REGION
+    global ec2, client, iam_client, ssm_client, AWS_REGION
     AWS_REGION = aws_region.get()
     try:
         Config = botocore.config.Config(region_name=AWS_REGION)
@@ -516,6 +510,21 @@ def check_creds():
             aws_secret_access_key=aws_secret_key.get(),
             config=Config
         )
+        iam_client = boto3.client('iam',
+            aws_access_key_id=aws_access_key.get(),
+            aws_secret_access_key=aws_secret_key.get(),
+            config=Config
+        )
+        ec2 = boto3.resource('ec2',
+            aws_access_key_id=aws_access_key.get(),
+            aws_secret_access_key=aws_secret_key.get(),
+            config=Config
+        )
+        ssm_client = boto3.client('ssm',
+            aws_access_key_id=aws_access_key.get(),
+            aws_secret_access_key=aws_secret_key.get(),
+            config=Config
+        ) 
         sts.get_caller_identity()
     except Exception:
         showerror('Error', 'Credentials are not valid. Check your AWS policies, credentials or region.')
